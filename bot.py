@@ -40,7 +40,8 @@ YDL_OPTIONS = {
     'ignoreerrors': True,
     'default_search': 'ytsearch',
     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-    'source_address': '0.0.0.0'
+    'source_address': '0.0.0.0',
+    'cookiefile': 'cookies.txt'
 }
 
 HISTORY_FILE = "history.json"
