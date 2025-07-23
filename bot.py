@@ -222,80 +222,65 @@ class MusicBot(commands.Cog):
 #                 break
 
 #播放新歌曲或加入隊列
+    # 請用這個版本完整替換掉你原有的 play 指令
+
     @commands.command()
-    async def play(self, ctx, *, search):
-        if self.disconnect_task:
+    async def play(self, ctx, *, search: str):
+        # 1. 立即回應，避免黃色驚嘆號
+        await ctx.send(f"收到！正在搜尋「{search}」...")
+
+        if self.disconnect_task and not self.disconnect_task.done():
             self.disconnect_task.cancel()
             self.disconnect_task = None
+
         voice_channel = ctx.author.voice.channel if ctx.author.voice else None
         if not voice_channel:
             return await ctx.send("進房間才能使用人家唷")
+        
         if not ctx.voice_client:
             await voice_channel.connect()
+        elif ctx.voice_client.channel != voice_channel:
+            await ctx.voice_client.move_to(voice_channel)
 
-        async with ctx.typing():
-            try:
-                with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
-                # ✅ 判斷是網址還是關鍵字
-                    if search.startswith("http://") or search.startswith("https://"):
-                        info = ydl.extract_info(search, download=False)
-                    else:
-                        info = ydl.extract_info(f"ytsearch1:{search}", download=False)
-                        if 'entries' in info and info['entries']:
-                            info = info['entries'][0]
+        # 2. 將耗時的 yt-dlp 操作放到獨立的執行緒中
+        loop = self.client.loop
+        try:
+            # 使用 lambda 來包裝同步函式，以便傳遞參數
+            info = await loop.run_in_executor(
+                None, 
+                lambda: yt_dlp.YoutubeDL(YDL_OPTIONS).extract_info(search, download=False)
+            )
+        except Exception as e:
+            print(f"[錯誤] yt-dlp 在 run_in_executor 中執行失敗: {e}")
+            return await ctx.send(f"搜尋歌曲時發生了網路錯誤，請稍後再試。")
 
-                if not info:
-                    await ctx.send(f"找不到 {search} 相關歌曲")
-                    return
-                
-                stream_url = info.get('url')
-                if not stream_url:
-                    await ctx.send("出錯了，請再嘗試點播一次，抱歉")
-                    return
-            
-                video_info = {
-                    'title': info.get('title'),
-                    'webpage_url': info.get('webpage_url'),
-                    'channel': info.get('channel', '未知頻道'),
-                    'thumbnail': info.get('thumbnail'),
-                    'stream_url': stream_url
-                    }
-                self.queue.append((stream_url, video_info))
-                await ctx.send(f'加入歌單: **{video_info["title"]}**')
-            except Exception as e:
-                await ctx.send(f"取得歌曲時發生錯誤：{e}")
-                print(f"[錯誤] play指令抓取錯誤")
-                return
-    
-            if not ctx.voice_client.is_playing():
-                url, video_info = self.queue.pop(0)
-                self.current_url = url
-                self.current_title = video_info['title']
-                if self.disconnect_task:
-                    self.disconnect_task.cancel()
-                    self.disconnect_task = None
-                try:
-                    source = await discord.FFmpegOpusAudio.from_probe(url, **FFMPEG_OPTIONS)
-                    ctx.voice_client.play(
-                        source,
-                        after=lambda e: self.client.loop.create_task(self.play_next(ctx))
-                    )
-                    await ctx.send(f'現在播放 **{video_info["title"]}**')
+        # 3. 處理 yt-dlp 的返回結果
+        if not info:
+            return await ctx.send(f"抱歉，我找不到與「{search}」相關的歌曲。")
 
-                    self.history.append({
-                        "title": video_info['title'],
-                       "url": video_info['webpage_url'],
-                        "channel": video_info['channel']
-                    })
-                    save_history(self.history)
-                except Exception as e:
-                    await ctx.send(f"出錯了，請再嘗試點播一次，抱歉")
-                    print(f"[錯誤] 播放失敗：{e}")
+        # 如果返回的是播放列表，安全地取第一個影片
+        if 'entries' in info:
+            info = info['entries'][0] if info['entries'] else None
 
-                    self.start_time = time.time()
-                    self.duration = info.get("duration", 0)
-                    self.current_video_info = info
+        if not info:
+            return await ctx.send(f"抱歉，我找不到與「{search}」相關的歌曲。")
 
+        stream_url = info.get('url')
+        if not stream_url:
+            return await ctx.send("這首歌好像不能直接播放耶，可能受到保護了。")
+
+        video_info = {
+            'title': info.get('title', '未知標題'),
+            'webpage_url': info.get('webpage_url'),
+            'channel': info.get('channel', '未知頻道'),
+            'thumbnail': info.get('thumbnail'),
+            'duration': info.get('duration', 0)
+        }
+        self.queue.append((stream_url, video_info))
+        await ctx.send(f'加入歌單: **{video_info["title"]}**')
+
+        if not ctx.voice_client.is_playing():
+            await self.play_next(ctx)
 #跳過歌曲
     @commands.command()
     async def skip(self, ctx):
