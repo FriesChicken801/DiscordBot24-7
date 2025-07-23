@@ -240,10 +240,14 @@ class MusicBot(commands.Cog):
                     if search.startswith("http://") or search.startswith("https://"):
                         info = ydl.extract_info(search, download=False)
                     else:
-                        info = ydl.extract_info(f"ytsearch:{search}", download=False)
-                        if 'entries' in info:
+                        info = ydl.extract_info(f"ytsearch1:{search}", download=False)
+                        if 'entries' in info and info['entries']:
                             info = info['entries'][0]
 
+                if not info:
+                    await ctx.send(f"找不到 {search} 相關歌曲")
+                    return
+                
                 stream_url = info.get('url')
                 if not stream_url:
                     await ctx.send("出錯了，請再嘗試點播一次，抱歉")
